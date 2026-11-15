@@ -104,5 +104,7 @@ model_discovery:
   path: "/v1/models"
   cache_ttl_hours: 24
   example_models:
+    - "mimo-v2.6-pro"
+    - "mimo-v2.6-flash"
     - "mimo-v2.5-pro"
     - "mimo-v2.5"
