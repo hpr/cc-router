@@ -295,7 +295,7 @@ mod tests {
             "mimo": {
                 "fetchedAt": "2026-11-15T02:37:42.552Z",
                 "plan": "Standard",
-                "month": { "used": 8787978068, "limit": 11000000000, "remaining": 2212021932,
+                "month": { "used": 8787978068.0, "limit": 11000000000.0, "remaining": 2212021932.0,
                     "percentUsed": 79.89, "percentRemaining": 20.11,
                     "resetAt": "2026-11-30T16:00:00Z", "timePercent": 45.6 }
             }

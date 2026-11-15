@@ -136,6 +136,7 @@ web_commands! {
     update_slot_schedules(id: String, schedules: SlotSchedules) => commands::subscriptions::update_slot_schedules(st, args.id, args.schedules).await,
     get_host_clock() => commands::subscriptions::get_host_clock().await,
     reset_total_quota_usage(id: String) => commands::subscriptions::reset_total_quota_usage(st, args.id).await,
+    refresh_quota_feed() => commands::subscriptions::refresh_quota_feed(st).await,
     // ChatGPT OAuth
     start_chatgpt_device_flow() => commands::oauth::start_chatgpt_device_flow(st).await,
     poll_chatgpt_device_code(device_code: String) => commands::oauth::poll_chatgpt_device_code(st, args.device_code).await,

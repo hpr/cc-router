@@ -5435,7 +5435,8 @@ fn reverting_every_change_clears_dirty() {
     let mut a = vm_app(false); // model-fable 初始是 Sequential
     a.handle_key(key(KeyCode::Char('m'))); // 顺序 -> 轮询
     a.handle_key(key(KeyCode::Char('m'))); // 轮询 -> 会话
-    a.handle_key(key(KeyCode::Char('m'))); // 会话 -> 顺序 (改回原值)
+    a.handle_key(key(KeyCode::Char('m'))); // 会话 -> 配额感知
+    a.handle_key(key(KeyCode::Char('m'))); // 配额感知 -> 顺序 (改回原值)
     let out = render(&mut a, 80, 24);
     assert!(!out.contains(" *"), "改回原值应该清脏\n{out}");
 }

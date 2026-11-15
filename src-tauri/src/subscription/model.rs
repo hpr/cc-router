@@ -291,7 +291,6 @@ pub struct SubscriptionRow {
     /// 配额感知路由: 指向全局配额 feed 响应里本订阅窗口对象的 JSON 指针
     /// (RFC 6901, 如 `/kimi/windows` / `/mimo`)。None = 不参与配额排序。
     /// feed URL 是全局设置 (settings.json `quota_feed_url`)。
-    #[serde(default)]
     pub quota_feed_path: Option<String>,
 
     pub provider_display_name: String,
