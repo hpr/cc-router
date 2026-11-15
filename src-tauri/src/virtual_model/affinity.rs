@@ -1,4 +1,4 @@
-//! In-memory session → subscription affinity for `RoutingMode::Sticky`.
+//! In-memory session → subscription affinity for sticky and quota-aware routing.
 //! Not persisted (same trade-off as `VirtualModelConfig::last_used_index`): a restart
 //! costs each live session one cold cache, which is acceptable.
 //!

@@ -666,7 +666,7 @@
   "virtualModels.mode.sequentialHint": "By priority, fail over on error",
   "virtualModels.mode.roundRobinHint": "Even distribution, skip when rate-limited",
   "virtualModels.mode.stickyHint": "Same session pins the same subscription, round-robin across sessions; keeps the prompt cache warm, concurrent subagents share it, and re-pins automatically on failure",
-  "virtualModels.mode.quotaAwareHint": "Prefer the subscription with the most remaining quota, normalized by how far into each window it is; missing or stale feed data falls back to binding order",
+  "virtualModels.mode.quotaAwareHint": "Keep each session on a healthy subscription; use normalized remaining quota for new sessions and failover, falling back to binding order when feed data is missing or stale",
   "virtualModels.addButton": "Add subscription to this virtual model",
   "virtualModels.dialog.title": "Select subscriptions to add",
   "virtualModels.dialog.empty": "No available subscriptions. Add one in \"Subscriptions\" first.",

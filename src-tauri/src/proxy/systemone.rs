@@ -365,8 +365,8 @@ struct LiveSink<'s> {
 impl AttemptSink for LiveSink<'_> {
     fn send<'a>(&'a mut self, c: &'a Candidate) -> BoxFuture<'a, AttemptResult> {
         Box::pin(async move {
-            // sticky: 候选真正被交付请求时才钉 (含切下家; 不弹回), 与对话路径一致。
-            if self.mode == RoutingMode::Sticky {
+            // 会话亲和: 候选真正被交付请求时才钉 (含切下家; 不弹回), 与对话路径一致。
+            if self.mode.uses_session_affinity() {
                 if let Some(key) = self.ctx.session_key.as_deref() {
                     let mut t = self.state.session_affinity.lock().unwrap_or_else(|e| e.into_inner());
                     t.pin(VirtualModelName::Jev, key, c.sub_id, Instant::now());
@@ -447,7 +447,7 @@ pub async fn dispatch(state: &AppState, raw_body: Bytes, client_model: String, c
     };
 
     let pinned = match (vm_config.mode, ctx.session_key.as_deref()) {
-        (RoutingMode::Sticky, Some(key)) => {
+        (mode, Some(key)) if mode.uses_session_affinity() => {
             let mut t = state.session_affinity.lock().unwrap_or_else(|e| e.into_inner());
             t.get(vm, key, Instant::now())
         }

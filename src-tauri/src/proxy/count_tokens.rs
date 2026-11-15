@@ -4,7 +4,7 @@
 //! Only Anthropic-passthrough subscriptions can answer it — translation
 //! upstreams have no equivalent endpoint. Selection is read-only: it reuses
 //! `build_candidate_order` (which never advances `last_used_index`; only the
-//! messages pipeline does), creates no sticky affinity, writes no request log,
+//! messages pipeline does), creates no session affinity, writes no request log,
 //! touches no quota and no state machine.
 
 use axum::http::{HeaderMap, StatusCode};

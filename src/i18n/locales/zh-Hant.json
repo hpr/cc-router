@@ -666,7 +666,7 @@
   "virtualModels.mode.sequentialHint": "按優先順序,失敗下降",
   "virtualModels.mode.roundRobinHint": "均勻分發,限流時跳過",
   "virtualModels.mode.stickyHint": "同一工作階段固定同一訂閱，跨工作階段輪詢；保住 prompt cache，並行子代理共享快取，失敗時自動切換並改釘",
-  "virtualModels.mode.quotaAwareHint": "優先選剩餘配額最多的訂閱 (按各視窗時間進度歸一); feed 缺失或過期時回退綁定順序",
+  "virtualModels.mode.quotaAwareHint": "已有工作階段保持在同一健康訂閱上; 新工作階段及故障移轉按時間進度歸一化的剩餘配額選擇, feed 缺失或過期時回退綁定順序",
   "virtualModels.addButton": "新增訂閱到此虛擬模型",
   "virtualModels.dialog.title": "選擇要新增的訂閱",
   "virtualModels.dialog.empty": "沒有可用的訂閱。先到「訂閱管理」新增一個。",

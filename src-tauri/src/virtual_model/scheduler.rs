@@ -17,7 +17,7 @@ use crate::virtual_model::model::{RoutingMode, VirtualModelConfig, VirtualModelN
 pub struct ScheduleOrder {
     pub candidate_ids: Vec<Uuid>,
     /// 本次调度选中的索引（用于更新 last_used_index）。None = 不前进索引：所有订阅都不可用,
-    /// 或 sticky 命中已钉住的订阅。
+    /// 或会话亲和命中已钉住的订阅。
     pub chosen_index: Option<usize>,
 }
 
@@ -57,33 +57,39 @@ pub async fn build_candidate_order(
         };
     }
 
-    // Sticky: 钉住的订阅在本 vm 里且可调度 → 排首, 其余按轮询序兜底, 不前进索引.
-    if vm.mode == RoutingMode::Sticky {
-        if let Some(pin) = pinned {
+    // 会话亲和: 钉住的订阅在本 vm 里且可调度才保留, 否则按当前模式的普通顺序故障转移.
+    let pinned = match (vm.mode.uses_session_affinity(), pinned) {
+        (true, Some(pin)) => {
             let pin_ok = match all_subs.get(&pin) {
                 Some(rt) if vm.subscription_ids.contains(&pin) => {
                     schedulable(&*rt.read().await, vm.name, now, clock)
                 }
                 _ => false,
             };
-            if pin_ok {
-                let start = (vm.last_used_index + 1) % n;
-                let mut candidate_ids = vec![pin];
-                for i in 0..n {
-                    let sub_id = vm.subscription_ids[(start + i) % n];
-                    if sub_id == pin {
-                        continue;
-                    }
-                    let Some(rt) = all_subs.get(&sub_id) else { continue };
-                    if schedulable(&*rt.read().await, vm.name, now, clock) {
-                        candidate_ids.push(sub_id);
-                    }
+            pin_ok.then_some(pin)
+        }
+        _ => None,
+    };
+
+    // Sticky: 钉住的订阅排首, 其余按轮询序兜底, 不前进索引.
+    if vm.mode == RoutingMode::Sticky {
+        if let Some(pin) = pinned {
+            let start = (vm.last_used_index + 1) % n;
+            let mut candidate_ids = vec![pin];
+            for i in 0..n {
+                let sub_id = vm.subscription_ids[(start + i) % n];
+                if sub_id == pin {
+                    continue;
                 }
-                return ScheduleOrder {
-                    candidate_ids,
-                    chosen_index: None,
-                };
+                let Some(rt) = all_subs.get(&sub_id) else { continue };
+                if schedulable(&*rt.read().await, vm.name, now, clock) {
+                    candidate_ids.push(sub_id);
+                }
             }
+            return ScheduleOrder {
+                candidate_ids,
+                chosen_index: None,
+            };
         }
     }
 
@@ -127,9 +133,21 @@ pub async fn build_candidate_order(
     if scoring {
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         candidate_ids = scored.into_iter().map(|(_, id)| id).collect();
-        chosen_index = candidate_ids
-            .first()
-            .and_then(|id| vm.subscription_ids.iter().position(|s| s == id));
+        // QuotaAware + 会话亲和: 健康的已钉订阅不受分数变化影响; 其余候选仍按 slack
+        // 降序作为故障转移顺序。新会话 / 钉住失效时不进入此分支, 保持纯配额排序。
+        let mut pin_retained = false;
+        if let Some(pos) = pinned.and_then(|pin| candidate_ids.iter().position(|id| *id == pin)) {
+            let pin = candidate_ids.remove(pos);
+            candidate_ids.insert(0, pin);
+            pin_retained = true;
+        }
+        chosen_index = if pin_retained {
+            None
+        } else {
+            candidate_ids
+                .first()
+                .and_then(|id| vm.subscription_ids.iter().position(|s| s == id))
+        };
     }
 
     ScheduleOrder {
@@ -461,6 +479,54 @@ mod tests {
         let order = build_candidate_order(&vm, &map, now, noon(), None).await;
         assert_eq!(order.candidate_ids, vec![ids[1], ids[2], ids[0]], "slack 降序");
         assert_eq!(order.chosen_index, Some(1), "首选是绑定序里的 ids[1]");
+    }
+
+    #[tokio::test]
+    async fn quota_aware_keeps_healthy_pin_and_orders_failover_by_slack() {
+        let mut map = HashMap::new();
+        let ids = three(&mut map, [SubscriptionState::Healthy; 3]);
+        let now = Utc::now();
+        feed_cache(&map, &ids[0], now, 20.11, 45.6).await;
+        feed_cache(&map, &ids[1], now, 36.84, 69.3781).await;
+        feed_cache(&map, &ids[2], now, 91.45, 12.3336).await;
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        // ids2 的分数低于 ids1, 但已有会话仍钉住 ids2; 故障转移顺序仍按 slack.
+        let order = build_candidate_order(&vm, &map, now, noon(), Some(ids[2])).await;
+        assert_eq!(order.candidate_ids, vec![ids[2], ids[1], ids[0]]);
+        assert_eq!(order.chosen_index, None, "会话亲和命中不前进索引");
+    }
+
+    #[tokio::test]
+    async fn quota_aware_uses_slack_order_when_pin_is_unschedulable() {
+        let mut map = HashMap::new();
+        let ids = three(
+            &mut map,
+            [
+                SubscriptionState::Healthy,
+                SubscriptionState::Healthy,
+                SubscriptionState::RateLimited,
+            ],
+        );
+        let now = Utc::now();
+        feed_cache(&map, &ids[0], now, 20.11, 45.6).await;
+        feed_cache(&map, &ids[1], now, 36.84, 69.3781).await;
+        feed_cache(&map, &ids[2], now, 100.0, 1.0).await;
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        let order = build_candidate_order(&vm, &map, now, noon(), Some(ids[2])).await;
+        assert_eq!(order.candidate_ids, vec![ids[1], ids[0]], "失效钉住不阻塞配额排序与故障转移");
+        assert_eq!(order.chosen_index, Some(1));
     }
 
     #[tokio::test]

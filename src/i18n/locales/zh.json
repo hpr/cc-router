@@ -666,7 +666,7 @@
   "virtualModels.mode.sequentialHint": "按优先级,失败下降",
   "virtualModels.mode.roundRobinHint": "均匀分发,限流时跳过",
   "virtualModels.mode.stickyHint": "同一会话固定同一订阅，跨会话轮询；保住 prompt cache，并发子代理共享缓存，失败时自动切换并改钉",
-  "virtualModels.mode.quotaAwareHint": "优先选剩余配额最多的订阅 (按各窗口时间进度归一); feed 缺失或过期时回退绑定顺序",
+  "virtualModels.mode.quotaAwareHint": "已有会话保持在同一健康订阅上; 新会话及故障转移按时间进度归一化的剩余配额选择, feed 缺失或过期时回退绑定顺序",
   "virtualModels.addButton": "添加订阅到此虚拟模型",
   "virtualModels.dialog.title": "选择要添加的订阅",
   "virtualModels.dialog.empty": "没有可用的订阅。先到「订阅管理」添加一个。",

@@ -168,10 +168,18 @@ pub enum RoutingMode {
     RoundRobin,
     /// 会话亲和: 同一会话钉住同一订阅, 新会话按轮询分配 (见 proxy::session_key / virtual_model::affinity)
     Sticky,
-    /// 配额感知: 按配额 feed 的 slack (余量进度 − 时间进度) 降序选订阅, 高者先出。
+    /// 配额感知: 新会话按配额 feed 的 slack (余量进度 − 时间进度) 降序选订阅, 高者先出;
+    /// 已有会话优先保持钉住的订阅, 不可调度时按 slack 顺序故障转移并重新钉住。
     /// 只重排候选顺序, 不抢先跳过; 无数据/过期的订阅排在有分数的之后, 全无数据时回退配置顺序。
-    /// 见 subscription::quota_feed。
+    /// 见 subscription::quota_feed 与 virtual_model::affinity。
     QuotaAware,
+}
+
+impl RoutingMode {
+    /// Whether this mode pins a session to the subscription that actually served it.
+    pub(crate) fn uses_session_affinity(self) -> bool {
+        matches!(self, Self::Sticky | Self::QuotaAware)
+    }
 }
 
 #[derive(Debug, Clone)]

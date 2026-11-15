@@ -1,4 +1,4 @@
-//! Session key extraction for sticky routing. Pure function, no IO.
+//! Session key extraction for session-affinity routing. Pure function, no IO.
 //!
 //! Priority (first hit wins):
 //! 0. SystemOne entry: only the `x-session-id` header (no body-derived keys — identical `state`s are independent decisions)

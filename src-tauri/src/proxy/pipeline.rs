@@ -55,7 +55,7 @@ use crate::subscription::model::{SubscriptionRow, SubscriptionRuntime};
 use crate::subscription::schedule::WallClock;
 use crate::subscription::state_machine;
 use crate::virtual_model::scheduler::{build_candidate_order, provides_slot_at};
-use crate::virtual_model::{RoutingMode, VirtualModelName};
+use crate::virtual_model::VirtualModelName;
 
 pub(crate) const ERROR_BODY_LIMIT: usize = 4096;
 
@@ -221,7 +221,7 @@ pub async fn dispatch(
 
     let now_instant = Instant::now();
     let pinned: Option<Uuid> = match (vm_config.mode, ctx.session_key.as_deref()) {
-        (RoutingMode::Sticky, Some(key)) => {
+        (mode, Some(key)) if mode.uses_session_affinity() => {
             let mut t = state
                 .session_affinity
                 .lock()
@@ -251,7 +251,7 @@ pub async fn dispatch(
         return Ok(overloaded::response_with_summary(vm_name, &summary));
     }
 
-    // 更新轮询索引（round_robin / sticky 未命中时；sticky 命中钉住返回 None 不前进）
+    // 更新轮询索引（round_robin / sticky 未命中时；会话亲和命中钉住返回 None 不前进）
     if let Some(idx) = order.chosen_index {
         let mut guard = state.virtual_models.write().await;
         if let Some(cfg) = guard.get_mut(&vm_name) {
@@ -395,9 +395,9 @@ pub async fn dispatch(
             continue;
         }
 
-        // sticky: 候选真正被交付请求时才钉 (含 retry 切下家; 不弹回); 放在所有「跳过不试」的
+        // 会话亲和: 候选真正被交付请求时才钉 (含 retry 切下家; 不弹回); 放在所有「跳过不试」的
         // continue 之后
-        if vm_config.mode == RoutingMode::Sticky {
+        if vm_config.mode.uses_session_affinity() {
             if let Some(key) = ctx.session_key.as_deref() {
                 let mut t = state
                     .session_affinity

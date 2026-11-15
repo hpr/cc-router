@@ -47,7 +47,7 @@ pub struct AppState {
     pub chatgpt_oauth: Arc<ChatGptOAuthManager>,
     pub kiro_oauth: Arc<KiroOAuthManager>,
     pub app_handle: AppHandle,
-    /// sticky 模式的会话 → 订阅亲和表. 内存, 不持久化.
+    /// 会话亲和模式的会话 → 订阅亲和表. 内存, 不持久化.
     pub session_affinity: Arc<std::sync::Mutex<AffinityTable>>,
     /// 网页界面会话表 (内存, 不持久化). generate_new_token 时清空.
     pub web_sessions: Arc<std::sync::Mutex<SessionStore>>,
