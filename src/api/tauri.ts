@@ -39,6 +39,7 @@ import type {
   ReceiptRange,
   ReleaseNotesDto,
   RefreshBalanceResult,
+  RefreshQuotaFeedResult,
   RefreshModelListResult,
   RequestLogFilters,
   RestartProxyResult,
@@ -85,6 +86,8 @@ export const api = {
     invoke<RefreshModelListResult>("refresh_model_list", { id }),
   refreshSubscriptionBalance: (id: string) =>
     invoke<RefreshBalanceResult>("refresh_subscription_balance", { id }),
+  refreshQuotaFeed: () =>
+    invoke<RefreshQuotaFeedResult>("refresh_quota_feed"),
   updateTokenQuotas: (id: string, quotas: TokenQuotas) =>
     invoke<SubscriptionDto>("update_token_quotas", { id, quotas }),
   resetTotalQuotaUsage: (id: string) =>

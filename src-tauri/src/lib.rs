@@ -136,6 +136,7 @@ pub fn run() {
             commands::subscriptions::refresh_model_list,
             commands::subscriptions::probe_custom_models,
             commands::subscriptions::refresh_subscription_balance,
+            commands::subscriptions::refresh_quota_feed,
             commands::subscriptions::update_token_quotas,
             commands::subscriptions::update_slot_schedules,
             commands::subscriptions::get_host_clock,
@@ -353,6 +354,13 @@ async fn bootstrap(
     let recheck_state = state.clone();
     tauri::async_runtime::spawn(async move {
         subscription::recheck_worker::run(recheck_state).await;
+    });
+
+    // 10. 启动配额 feed 轮询器: 每 5min 拉一次全局 feed, 刷新配额感知路由的排序缓存。
+    //     URL 未配置时空转 (quota_feed::run 内部短路), 不产生请求。
+    let quota_feed_state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        subscription::quota_feed::run(quota_feed_state).await;
     });
 
     let cleanup_pool = state.db.clone();

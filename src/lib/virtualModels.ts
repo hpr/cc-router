@@ -75,6 +75,7 @@ export const MODE_LABEL_KEY: Record<RoutingMode, string> = {
   sequential: "vm.mode.sequential",
   round_robin: "vm.mode.round_robin",
   sticky: "vm.mode.sticky",
+  quota_aware: "vm.mode.quota_aware",
 };
 
 export function isJev(name: VirtualModelName): boolean {

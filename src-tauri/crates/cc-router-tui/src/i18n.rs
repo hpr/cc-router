@@ -303,11 +303,13 @@ pub struct Strings {
     pub vm_mode_seq: &'static str,
     pub vm_mode_rr: &'static str,
     pub vm_mode_sticky: &'static str,
+    pub vm_mode_quota: &'static str,
     pub vm_mode_unknown: &'static str,
     /// 四个全名 (带线上名字, 成员面板 `title_bottom` 用), 通过 [`Strings::vm_mode_full`] 取。
     pub vm_mode_full_seq: &'static str,
     pub vm_mode_full_rr: &'static str,
     pub vm_mode_full_sticky: &'static str,
+    pub vm_mode_full_quota: &'static str,
     pub vm_mode_full_unknown: &'static str,
     /// 成员面板 `title_bottom`: `{mode_full} · {n} 个订阅`。
     pub vm_members_summary: fn(mode_full: &str, n: usize) -> String,
@@ -610,6 +612,7 @@ impl Strings {
             RoutingMode::Sequential => self.vm_mode_seq,
             RoutingMode::RoundRobin => self.vm_mode_rr,
             RoutingMode::Sticky => self.vm_mode_sticky,
+            RoutingMode::QuotaAware => self.vm_mode_quota,
             RoutingMode::Unknown => self.vm_mode_unknown,
         }
     }
@@ -619,6 +622,7 @@ impl Strings {
             RoutingMode::Sequential => self.vm_mode_full_seq,
             RoutingMode::RoundRobin => self.vm_mode_full_rr,
             RoutingMode::Sticky => self.vm_mode_full_sticky,
+            RoutingMode::QuotaAware => self.vm_mode_full_quota,
             RoutingMode::Unknown => self.vm_mode_full_unknown,
         }
     }
@@ -829,10 +833,12 @@ pub const ZH: Strings = Strings {
     vm_mode_seq: "顺序",
     vm_mode_rr: "轮询",
     vm_mode_sticky: "会话",
+    vm_mode_quota: "配额",
     vm_mode_unknown: "未知",
     vm_mode_full_seq: "顺序 (sequential)",
     vm_mode_full_rr: "轮询 (round_robin)",
     vm_mode_full_sticky: "会话亲和 (sticky)",
+    vm_mode_full_quota: "配额感知 (quota_aware)",
     vm_mode_full_unknown: "未知",
     vm_members_summary: |mode, n| format!("{mode} · {n} 个订阅"),
     vm_empty: "还没有绑定订阅,按 a 加入",
@@ -1255,10 +1261,12 @@ pub const ZH_HANT: Strings = Strings {
     vm_mode_seq: "依序",
     vm_mode_rr: "輪詢",
     vm_mode_sticky: "工作階段",
+    vm_mode_quota: "配額",
     vm_mode_unknown: "未知",
     vm_mode_full_seq: "依序 (sequential)",
     vm_mode_full_rr: "輪詢 (round_robin)",
     vm_mode_full_sticky: "工作階段親和 (sticky)",
+    vm_mode_full_quota: "配額感知 (quota_aware)",
     vm_mode_full_unknown: "未知",
     vm_members_summary: |mode, n| format!("{mode} · {n} 個訂閱"),
     vm_empty: "還沒有綁定訂閱,按 a 加入",
@@ -1687,10 +1695,12 @@ pub const EN: Strings = Strings {
     vm_mode_seq: "Sequential",
     vm_mode_rr: "Round-robin",
     vm_mode_sticky: "Affinity",
+    vm_mode_quota: "Quota",
     vm_mode_unknown: "Unknown",
     vm_mode_full_seq: "Sequential",
     vm_mode_full_rr: "Round-robin",
     vm_mode_full_sticky: "Session affinity",
+    vm_mode_full_quota: "Quota-aware",
     vm_mode_full_unknown: "Unknown",
     vm_members_summary: |mode, n| {
         let noun = if n == 1 { "subscription" } else { "subscriptions" };
@@ -2120,10 +2130,12 @@ pub const JA: Strings = Strings {
     vm_mode_seq: "順次",
     vm_mode_rr: "ラウンドロビン",
     vm_mode_sticky: "セッション固定",
+    vm_mode_quota: "クォータ",
     vm_mode_unknown: "不明",
     vm_mode_full_seq: "順次",
     vm_mode_full_rr: "ラウンドロビン",
     vm_mode_full_sticky: "セッション固定",
+    vm_mode_full_quota: "クォータ順",
     vm_mode_full_unknown: "不明",
     // 80 列右栏底边放不下「セッション固定 · サブスクリプション n 件」, 用短形。
     vm_members_summary: |mode, n| format!("{mode} · サブスク {n} 件"),

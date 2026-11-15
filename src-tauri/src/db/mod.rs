@@ -118,6 +118,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
         include_str!("../../migrations/027_add_request_header_logs.sql"),
     ),
     (28, include_str!("../../migrations/028_add_request_first_content.sql")),
+    (29, include_str!("../../migrations/029_add_quota_feed.sql")),
 ];
 
 pub async fn init_pool(db_path: &Path) -> AppResult<SqlitePool> {

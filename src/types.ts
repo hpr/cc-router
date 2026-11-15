@@ -109,7 +109,7 @@ export type VirtualModelName =
 /** 端点协议: messages = 对话类 (三个对话入口); systemone = Jev 决策协议, 只服务 POST /v1/systemone */
 export type EndpointProtocol = "messages" | "systemone";
 export type SubscriptionSlot = "fable" | "opus" | "sonnet" | "haiku";
-export type RoutingMode = "sequential" | "round_robin" | "sticky";
+export type RoutingMode = "sequential" | "round_robin" | "sticky" | "quota_aware";
 export type SubscriptionState =
   | "healthy"
   | "rate_limited"
@@ -337,6 +337,33 @@ export type RefreshBalanceResult =
   | { kind: "failed"; reason: string }
   | { kind: "unsupported" };
 
+/** 配额 feed 单窗口 (5h/周/月…), 字段可能缺省 (后端只保证参与排序的字段)。 */
+export interface QuotaFeedWindow {
+  label: string;
+  used?: number;
+  limit?: number;
+  remaining?: number;
+  percent_remaining?: number;
+  time_percent?: number;
+  reset_at?: string;
+}
+
+/** 配额 feed 缓存 DTO (持久化在 subscription_quota_feed_cache 表)。slack = 后端算好的排序分。 */
+export interface QuotaFeedCacheDto {
+  /** Unix ms */
+  fetched_at: number;
+  windows: QuotaFeedWindow[];
+  /** 各窗口 (percentRemaining − (100 − timePercent)) 的最小值; undefined = 无法计算 */
+  slack?: number;
+}
+
+/** refresh_quota_feed command 返回. */
+export interface RefreshQuotaFeedResult {
+  updated: number;
+  /** Unix ms */
+  fetched_at: number;
+}
+
 export interface SubscriptionDto {
   id: string;
   /** 来源标记: 内置 yaml id 或自定义 marker (如 "custom" / "custom-openai") */
@@ -393,6 +420,10 @@ export interface SubscriptionDto {
   balance_supported: boolean;
   /** 余额缓存 (上次拉到的值). undefined 表示从未查过或不支持. */
   balance_cache?: BalanceCacheDto;
+  /** 配额感知路由: 本订阅在全局 feed 里的 JSON 指针 (如 /kimi/windows)。undefined = 未配置。 */
+  quota_feed_path?: string;
+  /** 配额 feed 最近一次解析结果。undefined = 从未拉到。 */
+  quota_feed_cache?: QuotaFeedCacheDto;
   /** 创建时写进 DB 的厂商名快照 (中文); 显示走 lib/providerText.ts::providerName。 */
   provider_display_name: string;
   /** 内置厂商的三语名字 (后端按 yaml 现查); 自定义订阅与 yaml 已删的厂商没有。 */
@@ -518,6 +549,8 @@ export interface SubscriptionPatch {
   url_params?: Record<string, string>;
   /** 自定义订阅: 改连接信息 */
   connection?: ConnectionPatch;
+  /** 配额感知路由: 全局 feed 里的 JSON 指针。空串 = 清空 (退出配额排序); 缺省 = 不改。 */
+  quota_feed_path?: string;
 }
 
 export interface TestConnectionResult {
@@ -623,6 +656,8 @@ export interface Settings {
   auto_check_updates: boolean;
   /** 上次关闭「更新内容」弹窗时的 app 版本; null = 从没有此功能的老版本升上来。只读, 由 mark_release_notes_seen 写 */
   last_seen_release_notes: string | null;
+  /** 配额感知路由: 全局配额 feed URL。空串 = 未配置 (quota_aware 模式回退配置顺序)。 */
+  quota_feed_url: string;
 }
 
 export type UpdateSource = "international" | "china";
@@ -651,6 +686,8 @@ export interface SettingsPatch {
   tui_enabled?: boolean;
   receipt_print_animation?: boolean;
   auto_check_updates?: boolean;
+  /** 配额感知路由的全局 feed URL。空串 = 清空 (停用)。 */
+  quota_feed_url?: string;
   // 注意: auth_token 不在 patch 里,必须通过 generateNewToken() 改
 }
 

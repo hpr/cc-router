@@ -54,6 +54,16 @@ export interface RouteMapData {
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 7];
 const CELLS_PER_DAY = 48;
 
+/** 与后端 subscription::quota_feed::STALE_AFTER_SECS (900s) 保持一致的预览口径。 */
+const QUOTA_FEED_STALE_MS = 15 * 60 * 1000;
+
+/** quota_aware 排序分: 缓存新鲜且有 slack 才有分, 否则沉底 (与调度器同语义)。 */
+function quotaScore(sub: SubscriptionDto): number {
+  const c = sub.quota_feed_cache;
+  if (!c || c.slack === undefined || c.slack === null) return -Infinity;
+  return Date.now() - c.fetched_at > QUOTA_FEED_STALE_MS ? -Infinity : c.slack;
+}
+
 /** 停用与凭证失效需要用户介入, 视为全周不可用。 */
 export function stablyAvailable(sub: SubscriptionDto): boolean {
   return sub.enabled !== false && sub.state !== "auth_failed";
@@ -182,7 +192,7 @@ export function buildRouteMap(
     const ok = stable && s.usable[ai] && skipped === null;
     const rank: RouteGroup["rank"] = !ok
       ? null
-      : vm.mode !== "sequential"
+      : vm.mode !== "sequential" && vm.mode !== "quota_aware"
         ? "join"
         : candidates === 0
           ? "first"
@@ -215,9 +225,24 @@ export function buildRouteMap(
     return group;
   });
 
+  // quota_aware: 上面按绑定序给的 first/backup 只是回退; 有新鲜 slack 时按分数降序重排
+  // (稳定排序: 同分/无分保持绑定序, 与调度器 build_candidate_order 同语义)。
+  if (vm.mode === "quota_aware" && candidates > 0) {
+    const order = groups
+      .filter((g) => g.rank !== null)
+      .sort((a, b) => quotaScore(b.sub) - quotaScore(a.sub));
+    order.forEach((g, k) => {
+      const rank: RouteGroup["rank"] = k === 0 ? "first" : "backup";
+      g.rank = rank;
+      const activeRow = g.rows.find((r) => r.active);
+      if (activeRow) activeRow.tag = rank;
+    });
+    first = order.length > 0 ? order[0] : null;
+  }
+
   let summary: RouteMapData["summary"];
   if (candidates === 0) summary = { kind: "none" };
-  else if (vm.mode === "sequential" && first) {
+  else if ((vm.mode === "sequential" || vm.mode === "quota_aware") && first) {
     const g: RouteGroup = first;
     const model = g.rows.find((r) => r.active)?.model ?? null;
     summary = model !== null ? { kind: "first", sub: g.sub.display_name, model } : { kind: "first", sub: g.sub.display_name };

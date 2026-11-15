@@ -34,6 +34,7 @@ import {
 import { SlotScheduleEditor } from "@/components/schedule/SlotScheduleEditor";
 import { SubscriptionBalancePanel } from "@/components/SubscriptionBalanceCard";
 import { SubscriptionQuotaCard } from "@/components/SubscriptionQuotaCard";
+import { SubscriptionQuotaFeedCard } from "@/components/SubscriptionQuotaFeedCard";
 import { api } from "@/api/tauri";
 import { KeyValueEditor, type KeyValueRow } from "@/components/KeyValueEditor";
 import { validateConnection, validateHeaderPolicyNames, validateRequiredHeaders } from "@/lib/connectionValidation";
@@ -117,6 +118,8 @@ export function SubscriptionEditPage() {
   const [headerPolicy, setHeaderPolicy] = useState<HeaderPolicy>({ mode: "none", names: [] });
   /** 内置订阅的自定义请求头 (extra_headers); 自定义订阅继续编辑 required_headers */
   const [extraHeaders, setExtraHeaders] = useState<KeyValueRow[]>([]);
+  /** 配额感知路由: 全局 feed 里的 JSON 指针草稿 (空串 = 不参与) */
+  const [quotaFeedPath, setQuotaFeedPath] = useState<string>("");
 
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -147,6 +150,7 @@ export function SubscriptionEditPage() {
       setAuthHeaderFormat(subQuery.data.auth_header_format);
       setProviderDisplayName(subQuery.data.provider_display_name);
       setHeaderPolicy(subQuery.data.header_policy ?? { mode: "none", names: [] });
+      setQuotaFeedPath(subQuery.data.quota_feed_path ?? "");
       setExtraHeaders(
         Object.entries(subQuery.data.extra_headers ?? {}).map(([key, value]) => ({ key, value })),
       );
@@ -201,6 +205,8 @@ export function SubscriptionEditPage() {
       display_name: displayName,
       model_slots: slots,
       slot_efforts: slotEfforts,
+      // 配额 feed 指针: 空串 = 清空 (退出配额排序), 后端 trim 后落库
+      quota_feed_path: quotaFeedPath.trim(),
     };
     // 仅透传订阅有透传策略 (翻译类订阅不渲染也不提交, 保持后端字段不变)
     if (sub.auth_type === "api_key" && !isSystemOne) {
@@ -601,6 +607,16 @@ export function SubscriptionEditPage() {
 
             <SubscriptionQuotaCard
               subscription={sub}
+              onChanged={() => {
+                queryClient.invalidateQueries({ queryKey: ["subscription", id] });
+                queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
+              }}
+            />
+
+            <SubscriptionQuotaFeedCard
+              subscription={sub}
+              pathDraft={quotaFeedPath}
+              onPathDraftChange={setQuotaFeedPath}
               onChanged={() => {
                 queryClient.invalidateQueries({ queryKey: ["subscription", id] });
                 queryClient.invalidateQueries({ queryKey: ["subscriptions"] });

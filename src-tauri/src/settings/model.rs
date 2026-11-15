@@ -120,6 +120,11 @@ pub struct Settings {
     /// 刻意不进 SettingsPatch: 只由 mark_release_notes_seen 写入当前版本。
     #[serde(default)]
     pub last_seen_release_notes: Option<String>,
+    /// 配额感知路由: 全局配额 feed URL (聚合器返回全部订阅的窗口余量)。
+    /// 空字符串 = 未配置, quota_feed worker 空转, quota_aware 路由模式回退配置顺序。
+    /// 每订阅的 JSON 指针在 subscriptions.quota_feed_path (migration 029)。
+    #[serde(default)]
+    pub quota_feed_url: String,
 }
 
 fn default_port() -> u16 {
@@ -194,6 +199,7 @@ impl Default for Settings {
             receipt_print_animation: default_receipt_print_animation(),
             auto_check_updates: default_auto_check_updates(),
             last_seen_release_notes: None,
+            quota_feed_url: String::new(),
         }
     }
 }
@@ -222,6 +228,8 @@ pub struct SettingsPatch {
     pub tui_enabled: Option<bool>,
     pub receipt_print_animation: Option<bool>,
     pub auto_check_updates: Option<bool>,
+    /// 配额感知路由的全局 feed URL。Some("") = 清空 (停用)。
+    pub quota_feed_url: Option<String>,
 }
 
 impl Settings {
@@ -291,6 +299,10 @@ impl Settings {
         }
         if let Some(p) = patch.auto_check_updates {
             self.auto_check_updates = p;
+        }
+        // trim 后落值: worker 侧同样按 trim 后判空, 两边口径一致
+        if let Some(p) = patch.quota_feed_url {
+            self.quota_feed_url = p.trim().to_string();
         }
     }
 }
@@ -617,5 +629,32 @@ mod tests {
         assert!(!s.auto_check_updates);
         s.apply_patch(SettingsPatch::default());
         assert!(!s.auto_check_updates);
+    }
+
+    #[test]
+    fn legacy_settings_json_without_quota_feed_url_loads_as_empty() {
+        // 老版本 settings.json 没有该字段, 升级后配额感知路由处于停用状态
+        let s: Settings = serde_json::from_str(r#"{"proxy_port": 23456}"#).unwrap();
+        assert_eq!(s.quota_feed_url, "");
+        assert_eq!(Settings::default().quota_feed_url, "");
+    }
+
+    #[test]
+    fn apply_patch_sets_and_clears_quota_feed_url() {
+        let mut s = Settings::default();
+        s.apply_patch(SettingsPatch {
+            quota_feed_url: Some("  https://habs.sdf.org:8080/kimi-usage/json  ".into()),
+            ..SettingsPatch::default()
+        });
+        assert_eq!(s.quota_feed_url, "https://habs.sdf.org:8080/kimi-usage/json");
+        // 全 None patch 不清空
+        s.apply_patch(SettingsPatch::default());
+        assert!(!s.quota_feed_url.is_empty());
+        // Some("") = 显式停用
+        s.apply_patch(SettingsPatch {
+            quota_feed_url: Some("   ".into()),
+            ..SettingsPatch::default()
+        });
+        assert_eq!(s.quota_feed_url, "");
     }
 }

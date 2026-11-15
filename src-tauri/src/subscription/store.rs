@@ -38,6 +38,7 @@ pub async fn load_runtime(
                 base_url, messages_path, auth_header_name, auth_header_format,
                 required_headers, forward_headers, header_policy, extra_headers,
                 model_discovery, balance_discovery,
+                quota_feed_path,
                 provider_display_name, provider_icon, is_user_defined,
                 auth_type, oauth_metadata, slot_efforts, token_quotas, endpoint_protocol,
                 url_params, systemone_wire, slot_schedules
@@ -68,9 +69,11 @@ pub async fn load_runtime(
         };
         let cache = load_model_cache(pool, &sub.id, &sub.endpoint_id).await?;
         let balance = load_balance_cache(pool, &sub.id).await?;
+        let quota_feed = load_quota_feed_cache(pool, &sub.id).await?;
         let mut rt = SubscriptionRuntime::from_row(sub);
         rt.model_cache = cache;
         rt.balance_cache = balance;
+        rt.quota_feed_cache = quota_feed;
         if let Some(usage) = quota_usage.remove(&rt.row.id) {
             rt.quota_usage = usage;
         }
@@ -166,6 +169,8 @@ fn row_to_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SubscriptionRow> {
             TokenQuotas::default()
         }
     };
+    // quota_feed_path 列在 migration 029 加, nullable (未配置配额感知路由的订阅是 NULL)。
+    let quota_feed_path: Option<String> = row.try_get("quota_feed_path")?;
     // slot_schedules 列在 migration 025 加, DEFAULT '{}' (= 没有时段规则). 同 token_quotas
     // 走宽容降级: 解析失败只是规则丢失回退到各槽默认模型, 不该让整条订阅加载失败。
     let slot_schedules_json: String = row.try_get("slot_schedules")?;
@@ -220,6 +225,7 @@ fn row_to_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SubscriptionRow> {
         systemone_wire,
         model_discovery,
         balance_discovery,
+        quota_feed_path,
         provider_display_name: row.try_get("provider_display_name")?,
         provider_icon: row.try_get("provider_icon")?,
         is_user_defined: {
@@ -263,13 +269,13 @@ pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> Ap
             enabled, is_auth_failed, last_error_message, created_at, updated_at,
             base_url, messages_path, auth_header_name, auth_header_format,
             required_headers, forward_headers, header_policy, extra_headers,
-            model_discovery, balance_discovery,
+            model_discovery, balance_discovery, quota_feed_path,
             provider_display_name, provider_icon, is_user_defined,
             auth_type, oauth_metadata, slot_efforts, token_quotas, endpoint_protocol,
             url_params, systemone_wire, slot_schedules)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
-                 ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?,
                  ?, ?, ?, ?, ?,
                  ?, ?, ?)",
@@ -300,6 +306,7 @@ pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> Ap
     .bind(extra_headers_json.clone())
     .bind(discovery_json)
     .bind(balance_discovery_json)
+    .bind(&sub.quota_feed_path)
     .bind(&sub.provider_display_name)
     .bind(&sub.provider_icon)
     .bind(sub.is_user_defined as i64)
@@ -368,7 +375,7 @@ pub async fn update_row(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<(
             enabled = ?, is_auth_failed = ?, last_error_message = ?, updated_at = ?,
             base_url = ?, messages_path = ?, auth_header_name = ?, auth_header_format = ?,
             required_headers = ?, forward_headers = ?, header_policy = ?, extra_headers = ?,
-            model_discovery = ?, balance_discovery = ?,
+            model_discovery = ?, balance_discovery = ?, quota_feed_path = ?,
             provider_display_name = ?, provider_icon = ?, is_user_defined = ?,
             url_params = ?, systemone_wire = ?,
             slot_schedules = ?
@@ -398,6 +405,7 @@ pub async fn update_row(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<(
     .bind(extra_headers_json.clone())
     .bind(discovery_json)
     .bind(balance_discovery_json)
+    .bind(&sub.quota_feed_path)
     .bind(&sub.provider_display_name)
     .bind(&sub.provider_icon)
     .bind(sub.is_user_defined as i64)
@@ -450,6 +458,10 @@ pub async fn delete(pool: &SqlitePool, id: &Uuid) -> AppResult<()> {
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM subscription_balance_cache WHERE subscription_id = ?")
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM subscription_quota_feed_cache WHERE subscription_id = ?")
         .bind(id.to_string())
         .execute(pool)
         .await?;
@@ -543,6 +555,51 @@ pub async fn save_balance_cache(
     let json = serde_json::to_string(snapshot)?;
     sqlx::query(
         "INSERT INTO subscription_balance_cache (subscription_id, fetched_at, payload_json)
+         VALUES (?, ?, ?)
+         ON CONFLICT(subscription_id) DO UPDATE SET
+           fetched_at = excluded.fetched_at,
+           payload_json = excluded.payload_json",
+    )
+    .bind(subscription_id.to_string())
+    .bind(snapshot.fetched_at.timestamp_millis())
+    .bind(json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 读取配额 feed 缓存 (配额感知路由). 反序列化失败视为无缓存, warn skip,
+/// 与 load_balance_cache 同口径: 单条坏数据不影响订阅加载。
+pub async fn load_quota_feed_cache(
+    pool: &SqlitePool,
+    subscription_id: &Uuid,
+) -> AppResult<Option<crate::subscription::quota_feed::QuotaFeedSnapshot>> {
+    let row = sqlx::query(
+        "SELECT payload_json FROM subscription_quota_feed_cache WHERE subscription_id = ?",
+    )
+    .bind(subscription_id.to_string())
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else { return Ok(None) };
+    let json: String = row.try_get("payload_json")?;
+    match serde_json::from_str(&json) {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(e) => {
+            warn!(error = %e, subscription_id = %subscription_id, "quota_feed_cache 反序列化失败, 视为无缓存");
+            Ok(None)
+        }
+    }
+}
+
+pub async fn save_quota_feed_cache(
+    pool: &SqlitePool,
+    subscription_id: &Uuid,
+    snapshot: &crate::subscription::quota_feed::QuotaFeedSnapshot,
+) -> AppResult<()> {
+    let json = serde_json::to_string(snapshot)?;
+    sqlx::query(
+        "INSERT INTO subscription_quota_feed_cache (subscription_id, fetched_at, payload_json)
          VALUES (?, ?, ?)
          ON CONFLICT(subscription_id) DO UPDATE SET
            fetched_at = excluded.fetched_at,
@@ -778,6 +835,65 @@ mod tests {
         let loaded = load_runtime(&pool).await.expect("load");
         let rt = loaded.get(&row.id).expect("订阅不应被整条跳过");
         assert_eq!(rt.read().await.row.slot_efforts.get(SubscriptionSlot::Opus), None);
+    }
+
+    /// migration 029: quota_feed_path 列 + subscription_quota_feed_cache 表的完整往返
+    /// (insert → update_row → load_runtime, 缓存 save → load), 并锁 delete 会清缓存行。
+    #[tokio::test]
+    async fn quota_feed_path_and_cache_roundtrip() {
+        use crate::subscription::quota_feed::{QuotaFeedSnapshot, QuotaFeedWindow};
+        let pool = migrated_pool().await;
+
+        let mut row = SubscriptionRow::test_fixture("moonshot", "global_endpoint_subscription");
+        row.quota_feed_path = Some("/kimi/windows".into());
+        insert(&pool, &row).await.expect("insert");
+
+        // 缓存写入 → 重启路径 (load_runtime) 能装填回 runtime
+        let snap = QuotaFeedSnapshot {
+            fetched_at: Utc::now(),
+            windows: vec![QuotaFeedWindow {
+                label: "month".into(),
+                percent_remaining: Some(36.84),
+                time_percent: Some(69.3781),
+                ..Default::default()
+            }],
+        };
+        save_quota_feed_cache(&pool, &row.id, &snap).await.expect("save cache");
+
+        let loaded = load_runtime(&pool).await.expect("load");
+        {
+            let rt = loaded.get(&row.id).expect("subscription present");
+            let g = rt.read().await;
+            assert_eq!(g.row.quota_feed_path.as_deref(), Some("/kimi/windows"));
+            let cache = g.quota_feed_cache.as_ref().expect("cache loaded");
+            assert_eq!(cache.windows.len(), 1);
+            assert!((cache.slack().unwrap() - 6.22).abs() < 0.01);
+        }
+
+        // update_row 改路径 (含清空)
+        let mut updated = row.clone();
+        updated.quota_feed_path = None;
+        update_row(&pool, &updated).await.expect("update");
+        let loaded = load_runtime(&pool).await.expect("reload");
+        assert!(
+            loaded.get(&row.id).unwrap().read().await.row.quota_feed_path.is_none(),
+            "清空后应为 NULL"
+        );
+
+        // delete 清掉缓存表行, 无孤儿残留
+        let mut full = row.clone();
+        full.quota_feed_path = Some("/mimo".into());
+        update_row(&pool, &full).await.expect("re-set path");
+        save_quota_feed_cache(&pool, &row.id, &snap).await.expect("re-save cache");
+        delete(&pool, &row.id).await.expect("delete");
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM subscription_quota_feed_cache WHERE subscription_id = ?",
+        )
+        .bind(row.id.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n, 0);
     }
 }
 

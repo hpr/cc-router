@@ -321,6 +321,7 @@ pub enum RoutingMode {
     Sequential,
     RoundRobin,
     Sticky,
+    QuotaAware,
     /// 后端将来加了新模式时, 旧 TUI 不应该整个列表解析失败。
     #[serde(other)]
     Unknown,
@@ -328,12 +329,13 @@ pub enum RoutingMode {
 
 impl RoutingMode {
     /// 虚拟模型页按 `m` 循环切换模式用: `Unknown` (旧 TUI 不认得的新模式) 落回 `Sequential`,
-    /// 不在三个已知模式之间瞎绕。
+    /// 不在四个已知模式之间瞎绕。
     pub fn next(self) -> Self {
         match self {
             RoutingMode::Sequential => RoutingMode::RoundRobin,
             RoutingMode::RoundRobin => RoutingMode::Sticky,
-            RoutingMode::Sticky => RoutingMode::Sequential,
+            RoutingMode::Sticky => RoutingMode::QuotaAware,
+            RoutingMode::QuotaAware => RoutingMode::Sequential,
             RoutingMode::Unknown => RoutingMode::Sequential,
         }
     }
@@ -346,6 +348,7 @@ impl RoutingMode {
             RoutingMode::Sequential => "sequential",
             RoutingMode::RoundRobin => "round_robin",
             RoutingMode::Sticky => "sticky",
+            RoutingMode::QuotaAware => "quota_aware",
             // Unknown 不该被发回后端 (只应该出现在「读到了不认识的模式」这一刻); 给个安全的
             // 缺省值而不是 panic, 与 `next()` 的兜底一致。
             RoutingMode::Unknown => "sequential",

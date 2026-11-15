@@ -257,6 +257,9 @@ pub struct SubscriptionPatch {
     pub url_params: Option<BTreeMap<String, String>>,
     /// 自定义订阅: 改连接信息。内置订阅传该字段会被拒绝。
     pub connection: Option<ConnectionPatch>,
+    /// 配额感知路由: 本订阅在全局配额 feed 里的 JSON 指针 (RFC 6901, 如 `/kimi/windows`)。
+    /// 整体替换; `Some("")` = 清空 (退出配额排序), 字段缺失 = 不改。内置/自定义订阅均可改。
+    pub quota_feed_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +399,7 @@ pub async fn create_subscription(
                 systemone_wire: snap.systemone_wire,
                 model_discovery: snap.model_discovery,
                 balance_discovery: provider.balance_discovery.clone(),
+                quota_feed_path: None,
                 provider_display_name: provider.display_name.zh.clone(),
                 provider_icon: provider.icon.clone().unwrap_or_default(),
                 is_user_defined: false,
@@ -460,6 +464,7 @@ pub async fn create_subscription(
                 systemone_wire: SystemoneWire::Standard,
                 model_discovery: discovery,
                 balance_discovery: None,
+                quota_feed_path: None,
                 provider_display_name,
                 provider_icon: profile.icon.to_string(),
                 is_user_defined: true,
@@ -588,6 +593,19 @@ pub async fn update_subscription(
     if let Some(efforts) = patch.slot_efforts.as_ref() {
         validate_slot_efforts(efforts)?;
     }
+    // 配额 feed 指针: 先规范化 (trim / 空串=清除), 非空时必须像 RFC 6901 指针
+    let quota_feed_path: Option<Option<String>> = match patch.quota_feed_path.as_deref() {
+        None => None, // 不改
+        Some(raw) => {
+            let t = raw.trim();
+            if t.is_empty() {
+                Some(None) // 显式清除
+            } else {
+                validate_quota_feed_path(t)?;
+                Some(Some(t.to_string()))
+            }
+        }
+    };
 
     {
         let mut guard = rt.write().await;
@@ -605,6 +623,9 @@ pub async fn update_subscription(
         }
         if let Some(v) = patch.extra_headers {
             guard.row.extra_headers = v;
+        }
+        if let Some(v) = quota_feed_path {
+            guard.row.quota_feed_path = v;
         }
         if let Some((eid, snap)) = resnapshot {
             guard.row.endpoint_id = eid;
@@ -990,6 +1011,53 @@ pub async fn refresh_subscription_balance(
             reason: e.to_string(),
         }),
     }
+}
+
+/// 配额感知路由: 手动触发一次全局 feed 拉取 (后台 worker 5 分钟一轮, 这是 UI 的"立即刷新")。
+/// 一次拉取作用于所有配了 quota_feed_path 的订阅。失败返回 Err (网络/HTTP/解析错误),
+/// 旧缓存不动; 成功返回更新条数 + 本次时间戳。
+#[derive(Debug, Serialize)]
+pub struct RefreshQuotaFeedResult {
+    pub updated: usize,
+    /// 本次 fetch 时间 (Unix ms), 与订阅缓存里的 fetched_at 同源。
+    pub fetched_at: i64,
+}
+
+#[tauri::command]
+pub async fn refresh_quota_feed(
+    state: State<'_, AppState>,
+) -> AppResult<RefreshQuotaFeedResult> {
+    let url = state.settings.read().await.quota_feed_url.trim().to_string();
+    if url.is_empty() {
+        return Err(AppError::BadRequest(
+            "未配置配额 feed URL (设置 → 配额感知路由)".into(),
+        ));
+    }
+    let subs = state.subscriptions.read().await.clone();
+    let now = Utc::now();
+    let updated =
+        crate::subscription::quota_feed::fetch_and_apply(&state.db, &state.probe_client, &url, &subs, now)
+            .await?;
+    Ok(RefreshQuotaFeedResult {
+        updated,
+        fetched_at: now.timestamp_millis(),
+    })
+}
+
+/// 配额 feed 指针校验: 必须像 RFC 6901 (以 `/` 开头), 且不能只指根对象。
+/// 指到什么东西 (窗口容器 / 单窗口) 由 fetch 时按 feed 实际结构识别, 这里不做形状假设。
+pub(crate) fn validate_quota_feed_path(s: &str) -> AppResult<()> {
+    if !s.starts_with('/') {
+        return Err(AppError::BadRequest(
+            "quota_feed_path 必须以 / 开头 (JSON 指针, 如 /kimi/windows)".into(),
+        ));
+    }
+    if s == "/" {
+        return Err(AppError::BadRequest(
+            "quota_feed_path 不能指向整个根对象, 请指到本订阅的窗口对象 (如 /kimi/windows)".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_base_url(s: &str) -> AppResult<()> {

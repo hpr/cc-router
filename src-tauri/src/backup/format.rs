@@ -91,6 +91,10 @@ pub struct ExportSubscription {
     pub model_discovery: ModelDiscovery,
     #[serde(default)]
     pub balance_discovery: Option<BalanceDiscovery>,
+    /// 配额感知路由: feed 里的 JSON 指针 (如 /kimi/windows)。明文导出: 指向用户自己的
+    /// 聚合 feed, 无凭据; 全局 feed URL 在 settings.json, 不随备份走, 导入后需重配一次。
+    #[serde(default)]
+    pub quota_feed_path: Option<String>,
     pub provider_display_name: String,
     #[serde(default)]
     pub provider_icon: String,
@@ -249,6 +253,7 @@ pub fn subscription_to_export(row: &SubscriptionRow) -> (ExportSubscription, Ext
         systemone_wire,
         model_discovery,
         balance_discovery,
+        quota_feed_path,
         provider_display_name,
         provider_icon,
         is_user_defined,
@@ -300,6 +305,7 @@ pub fn subscription_to_export(row: &SubscriptionRow) -> (ExportSubscription, Ext
         systemone_wire: *systemone_wire,
         model_discovery: model_discovery.clone(),
         balance_discovery: balance_discovery.clone(),
+        quota_feed_path: quota_feed_path.clone(),
         provider_display_name: provider_display_name.clone(),
         provider_icon: provider_icon.clone(),
         is_user_defined: *is_user_defined,
@@ -355,6 +361,7 @@ pub fn export_to_row(
         systemone_wire: sub.systemone_wire,
         model_discovery: sub.model_discovery.clone(),
         balance_discovery: sub.balance_discovery.clone(),
+        quota_feed_path: sub.quota_feed_path.clone(),
         provider_display_name: sub.provider_display_name.clone(),
         provider_icon: sub.provider_icon.clone(),
         is_user_defined: sub.is_user_defined,

@@ -25,14 +25,30 @@ import { fmtBytes, fmtNum } from "@/lib/format";
 import type { SettingsForm } from "./useSettingsForm";
 import { errorText } from "@/lib/errorText";
 
-/** 高级: 数据存储 / 调试 / 危险区域 (恢复出厂). 危险区固定放最底部, 保持不容易顺手点到. */
+/** 高级: 数据存储 / 配额感知路由 / 调试 / 危险区域 (恢复出厂). 危险区固定放最底部, 保持不容易顺手点到. */
 export function AdvancedTab({ form }: { form: SettingsForm }) {
   const { t } = useT();
+  const { settings } = form;
   const storage = useStorageStats();
   const [clearDumpsDialog, setClearDumpsDialog] = useState(false);
   const [clearingDumps, setClearingDumps] = useState(false);
   const [resetDialog, setResetDialog] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
+  const [feedMessage, setFeedMessage] = useState<string | null>(null);
+
+  async function refreshQuotaFeed() {
+    setFeedRefreshing(true);
+    setFeedMessage(null);
+    try {
+      const r = await api.refreshQuotaFeed();
+      setFeedMessage(t("settings.quotaFeed.refreshed", { n: r.updated }));
+    } catch (e) {
+      setFeedMessage(`${t("settings.quotaFeed.refreshFailed")}: ${errorText(e)}`);
+    } finally {
+      setFeedRefreshing(false);
+    }
+  }
 
   async function openDumps() {
     try {
@@ -116,6 +132,57 @@ export function AdvancedTab({ form }: { form: SettingsForm }) {
                   events: fmtNum(storage.data.events_rows),
                 })
               : t("settings.storage.usageLoading")}
+          </div>
+        </div>
+      </div>
+
+      {/* 配额感知路由 */}
+      <div className="card section">
+        <div className="card-head">
+          <div className="card-title">{t("settings.quotaFeed.section")}</div>
+        </div>
+        <div className="card-body">
+          <div className="setting-row">
+            <div className="label-col">
+              {t("settings.quotaFeed.label")}
+              <div className="desc">{t("settings.quotaFeed.desc")}</div>
+            </div>
+            <div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  className="input mono"
+                  value={form.quotaFeedUrl}
+                  onChange={(e) => form.setQuotaFeedUrl(e.target.value)}
+                  onBlur={() => {
+                    // 失焦提交 (与 AccessTab 的 CORS origin 同款): 值没变不打补丁
+                    if (
+                      settings.data &&
+                      form.quotaFeedUrl !== (settings.data.quota_feed_url ?? "")
+                    ) {
+                      void form.changeQuotaFeedUrl(form.quotaFeedUrl);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                  placeholder="https://example.com/quota.json"
+                  style={{ maxWidth: 280 }}
+                />
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => void refreshQuotaFeed()}
+                  disabled={feedRefreshing}
+                >
+                  {feedRefreshing ? <Spinner size={12} /> : t("settings.quotaFeed.refresh")}
+                </button>
+              </div>
+              {feedMessage && (
+                <div className="field-hint" style={{ marginTop: 6 }}>
+                  {feedMessage}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

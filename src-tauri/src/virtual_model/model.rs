@@ -168,6 +168,10 @@ pub enum RoutingMode {
     RoundRobin,
     /// 会话亲和: 同一会话钉住同一订阅, 新会话按轮询分配 (见 proxy::session_key / virtual_model::affinity)
     Sticky,
+    /// 配额感知: 按配额 feed 的 slack (余量进度 − 时间进度) 降序选订阅, 高者先出。
+    /// 只重排候选顺序, 不抢先跳过; 无数据/过期的订阅排在有分数的之后, 全无数据时回退配置顺序。
+    /// 见 subscription::quota_feed。
+    QuotaAware,
 }
 
 #[derive(Debug, Clone)]

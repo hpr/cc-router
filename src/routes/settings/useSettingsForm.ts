@@ -44,6 +44,7 @@ export function useSettingsForm() {
   const [webUiEnabled, setWebUiEnabled] = useState(false);
   const [webUiAuthEnabled, setWebUiAuthEnabled] = useState(true);
   const [tuiEnabled, setTuiEnabled] = useState(false);
+  const [quotaFeedUrl, setQuotaFeedUrl] = useState("");
 
   // 仅在首次拿到 settings.data 时灌入本地 state. 后续 mutate refetch
   // 不再回灌, 否则会覆盖用户正在 input 里编辑但尚未 blur 的值 (port/cors origin 跳光标).
@@ -68,6 +69,7 @@ export function useSettingsForm() {
     setWebUiEnabled(settings.data.web_ui_enabled);
     setWebUiAuthEnabled(settings.data.web_ui_auth_enabled);
     setTuiEnabled(settings.data.tui_enabled);
+    setQuotaFeedUrl(settings.data.quota_feed_url ?? "");
     initializedRef.current = true;
   }, [settings.data]);
 
@@ -171,6 +173,10 @@ export function useSettingsForm() {
   async function changeCorsOrigin(next: string) {
     await patch({ cors_allow_origin: next });
   }
+  // 配额感知路由的全局 feed URL (空串 = 停用), 失焦提交与 CORS origin 同款
+  async function changeQuotaFeedUrl(next: string) {
+    await patch({ quota_feed_url: next });
+  }
 
   async function restartProxy() {
     // 保存失败已在 patch 里提示过, 这里只等它结束
@@ -228,6 +234,9 @@ export function useSettingsForm() {
     webUiEnabled,
     webUiAuthEnabled,
     tuiEnabled,
+    quotaFeedUrl,
+    setQuotaFeedUrl,
+    changeQuotaFeedUrl,
     changeLanguage,
     changeUpdateSource,
     changeAutoCheckUpdates,

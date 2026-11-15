@@ -288,6 +288,11 @@ pub struct SubscriptionRow {
     pub model_discovery: ModelDiscovery,
     /// 余额查询配置 snapshot. provider yaml 不声明则为 None, UI 不显示余额卡片.
     pub balance_discovery: Option<BalanceDiscovery>,
+    /// 配额感知路由: 指向全局配额 feed 响应里本订阅窗口对象的 JSON 指针
+    /// (RFC 6901, 如 `/kimi/windows` / `/mimo`)。None = 不参与配额排序。
+    /// feed URL 是全局设置 (settings.json `quota_feed_url`)。
+    #[serde(default)]
+    pub quota_feed_path: Option<String>,
 
     pub provider_display_name: String,
     pub provider_icon: String,
@@ -418,6 +423,10 @@ pub struct SubscriptionRuntime {
     /// 内存用量计数 (4 周期桶), 判定真值; 启动时由 store::load_quota_usage 装填,
     /// request_log consumer 实时累加, flush 时按快照落 subscription_quota_usage 表.
     pub quota_usage: QuotaUsage,
+    /// 配额 feed 解析缓存 (配额感知路由)。None = 未配路径 / 从未拉到 / 拉取失败且无旧值。
+    /// 持久化在 `subscription_quota_feed_cache` 表, 启动时经 store::load_quota_feed_cache 装填;
+    /// quota_feed worker 每 5 分钟覆盖。调度侧按 `STALE_AFTER` 判新鲜度。
+    pub quota_feed_cache: Option<crate::subscription::quota_feed::QuotaFeedSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -501,6 +510,7 @@ impl SubscriptionRuntime {
             model_cache: None,
             balance_cache: None,
             quota_usage: QuotaUsage::default(),
+            quota_feed_cache: None,
         }
     }
 
@@ -630,6 +640,12 @@ pub struct SubscriptionDto {
     /// Last cached balance payload. `None` when never fetched or unsupported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balance_cache: Option<BalanceCacheDto>,
+    /// 配额感知路由: 本订阅在全局 feed 里的 JSON 指针 (如 `/kimi/windows`)。None = 未配置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_feed_path: Option<String>,
+    /// 配额 feed 最近一次解析结果 (含排序分 slack)。None = 从未拉到。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_feed_cache: Option<QuotaFeedCacheDto>,
     /// 创建订阅时写进 DB 的厂商名快照 (中文)。自定义订阅是用户自己填的名字。
     pub provider_display_name: String,
     /// 内置厂商的三语名字, 按 `provider_id` 从当前 yaml 现查; 显示时优先用它, 快照只给自定义订阅
@@ -678,6 +694,15 @@ pub struct BalanceCacheDto {
     pub snapshot: BalanceSnapshot,
 }
 
+/// 配额 feed 缓存的前端 DTO (配额感知路由)。slack 为后端算好的订阅排序分
+/// (各窗口 `percentRemaining − (100 − timePercent)` 的最小值), None = 无法计算。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaFeedCacheDto {
+    pub fetched_at: i64,
+    pub windows: Vec<crate::subscription::quota_feed::QuotaFeedWindow>,
+    pub slack: Option<f64>,
+}
+
 #[cfg(test)]
 impl SubscriptionRow {
     /// 测试用 fixture: 生成一个连接信息全空但字段齐全的 row, 调用方可后续覆盖关心的字段。
@@ -719,6 +744,7 @@ impl SubscriptionRow {
             systemone_wire: SystemoneWire::Standard,
             model_discovery: ModelDiscovery::default(),
             balance_discovery: None,
+            quota_feed_path: None,
             provider_display_name: String::new(),
             provider_icon: String::new(),
             is_user_defined: false,
@@ -800,6 +826,12 @@ impl SubscriptionDto {
             balance_cache: rt.balance_cache.as_ref().map(|s| BalanceCacheDto {
                 fetched_at: s.fetched_at.timestamp_millis(),
                 snapshot: s.clone(),
+            }),
+            quota_feed_path: rt.row.quota_feed_path.clone(),
+            quota_feed_cache: rt.quota_feed_cache.as_ref().map(|s| QuotaFeedCacheDto {
+                fetched_at: s.fetched_at.timestamp_millis(),
+                windows: s.windows.clone(),
+                slack: s.slack(),
             }),
             provider_display_name: rt.row.provider_display_name.clone(),
             provider_names: providers

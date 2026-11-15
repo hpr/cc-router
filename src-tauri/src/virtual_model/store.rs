@@ -21,6 +21,7 @@ pub async fn load_all(
         let mode = match mode_str.as_deref() {
             Some("round_robin") => RoutingMode::RoundRobin,
             Some("sticky") => RoutingMode::Sticky,
+            Some("quota_aware") => RoutingMode::QuotaAware,
             _ => RoutingMode::Sequential,
         };
 
@@ -72,6 +73,7 @@ pub async fn save_mode_on(
         RoutingMode::Sequential => "sequential",
         RoutingMode::RoundRobin => "round_robin",
         RoutingMode::Sticky => "sticky",
+        RoutingMode::QuotaAware => "quota_aware",
     };
     sqlx::query(
         "INSERT INTO virtual_model_config (virtual_model_name, mode)
@@ -134,6 +136,17 @@ mod sticky_tests {
         assert_eq!(all[&VirtualModelName::Sonnet].mode, RoutingMode::Sticky);
         // serde 值
         assert_eq!(serde_json::to_string(&RoutingMode::Sticky).unwrap(), "\"sticky\"");
+    }
+
+    #[tokio::test]
+    async fn quota_aware_mode_roundtrips_through_db() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        save_mode(&pool, VirtualModelName::Sonnet, RoutingMode::QuotaAware).await.unwrap();
+        let all = load_all(&pool).await.unwrap();
+        assert_eq!(all[&VirtualModelName::Sonnet].mode, RoutingMode::QuotaAware);
+        // serde 值 (前端 Settings/类型侧同名)
+        assert_eq!(serde_json::to_string(&RoutingMode::QuotaAware).unwrap(), "\"quota_aware\"");
     }
 
     #[tokio::test]

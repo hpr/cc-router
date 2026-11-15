@@ -452,13 +452,14 @@ fn every_backend_state_is_known_to_the_tui() {
     }
 }
 
-/// 三种调度模式各自序列化后能被 TUI 的 `dto::VirtualModel` 解析, 字段值原样保留。
+/// 四种调度模式各自序列化后能被 TUI 的 `dto::VirtualModel` 解析, 字段值原样保留。
 #[test]
 fn virtual_model_dto_matches() {
     for (mode, expected) in [
         (RoutingMode::Sequential, dto::RoutingMode::Sequential),
         (RoutingMode::RoundRobin, dto::RoutingMode::RoundRobin),
         (RoutingMode::Sticky, dto::RoutingMode::Sticky),
+        (RoutingMode::QuotaAware, dto::RoutingMode::QuotaAware),
     ] {
         let real = VirtualModelDto {
             name: "model-sonnet".into(),
@@ -475,7 +476,12 @@ fn virtual_model_dto_matches() {
 /// 后端的每一个调度模式, TUI 都必须认得 —— 落到 `Unknown` 说明 TUI 的枚举漏了一个。
 #[test]
 fn every_backend_routing_mode_is_known_to_the_tui() {
-    for mode in [RoutingMode::Sequential, RoutingMode::RoundRobin, RoutingMode::Sticky] {
+    for mode in [
+        RoutingMode::Sequential,
+        RoutingMode::RoundRobin,
+        RoutingMode::Sticky,
+        RoutingMode::QuotaAware,
+    ] {
         let view: dto::RoutingMode = through_json(&mode);
         assert_ne!(view, dto::RoutingMode::Unknown, "{mode:?}");
     }
@@ -491,6 +497,7 @@ fn routing_mode_wire_names_round_trip() {
         (dto::RoutingMode::Sequential, RoutingMode::Sequential),
         (dto::RoutingMode::RoundRobin, RoutingMode::RoundRobin),
         (dto::RoutingMode::Sticky, RoutingMode::Sticky),
+        (dto::RoutingMode::QuotaAware, RoutingMode::QuotaAware),
     ] {
         let wire = tui_mode.as_wire();
         let real: RoutingMode = serde_json::from_value(serde_json::Value::String(wire.to_string()))

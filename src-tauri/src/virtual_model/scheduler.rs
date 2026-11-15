@@ -89,7 +89,7 @@ pub async fn build_candidate_order(
 
     // 构造扫描顺序 (Sticky 未命中时按轮询)
     let scan_order: Vec<usize> = match vm.mode {
-        RoutingMode::Sequential => (0..n).collect(),
+        RoutingMode::Sequential | RoutingMode::QuotaAware => (0..n).collect(),
         RoutingMode::RoundRobin | RoutingMode::Sticky => {
             let start = (vm.last_used_index + 1) % n;
             (0..n).map(|i| (start + i) % n).collect()
@@ -98,17 +98,38 @@ pub async fn build_candidate_order(
 
     let mut candidate_ids = Vec::with_capacity(n);
     let mut chosen_index: Option<usize> = None;
+    // QuotaAware: 先收 (score, id) 再稳定排序。None 分 (无缓存/过期/无可算窗口) 映射
+    // NEG_INFINITY, 降序排自然沉到有分数的之后; 稳定排序让同分/无分的保持绑定顺序兜底。
+    let scoring = vm.mode == RoutingMode::QuotaAware;
+    let mut scored: Vec<(f64, Uuid)> = Vec::new();
 
     for &idx in &scan_order {
         let sub_id = vm.subscription_ids[idx];
         let Some(rt) = all_subs.get(&sub_id) else { continue };
         let guard = rt.read().await;
         if schedulable(&guard, vm.name, now, clock) {
-            if chosen_index.is_none() {
-                chosen_index = Some(idx);
+            if scoring {
+                let score = guard
+                    .quota_feed_cache
+                    .as_ref()
+                    .and_then(|c| c.slack_if_fresh(now))
+                    .unwrap_or(f64::NEG_INFINITY);
+                scored.push((score, sub_id));
+            } else {
+                if chosen_index.is_none() {
+                    chosen_index = Some(idx);
+                }
+                candidate_ids.push(sub_id);
             }
-            candidate_ids.push(sub_id);
         }
+    }
+
+    if scoring {
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        candidate_ids = scored.into_iter().map(|(_, id)| id).collect();
+        chosen_index = candidate_ids
+            .first()
+            .and_then(|id| vm.subscription_ids.iter().position(|s| s == id));
     }
 
     ScheduleOrder {
@@ -396,5 +417,111 @@ mod tests {
             let o = build_candidate_order(&vm, &map, Utc::now(), noon(), None).await;
             assert_eq!(o.candidate_ids, ids, "{name:?} must not be filtered by the sonnet slot");
         }
+    }
+
+    // ---- QuotaAware ----
+
+    use crate::subscription::quota_feed::{QuotaFeedSnapshot, QuotaFeedWindow, STALE_AFTER_SECS};
+
+    /// 给订阅塞一份单窗口 feed 缓存: slack = pr − (100 − tp)。
+    async fn feed_cache(
+        map: &HashMap<Uuid, Arc<RwLock<SubscriptionRuntime>>>,
+        id: &Uuid,
+        fetched_at: DateTime<Utc>,
+        pr: f64,
+        tp: f64,
+    ) {
+        map.get(id).unwrap().write().await.quota_feed_cache = Some(QuotaFeedSnapshot {
+            fetched_at,
+            windows: vec![QuotaFeedWindow {
+                label: "month".into(),
+                percent_remaining: Some(pr),
+                time_percent: Some(tp),
+                ..Default::default()
+            }],
+        });
+    }
+
+    #[tokio::test]
+    async fn quota_aware_orders_by_fresh_slack_desc() {
+        let mut map = HashMap::new();
+        let ids = three(&mut map, [SubscriptionState::Healthy; 3]);
+        let now = Utc::now();
+        // 真实 feed 数值: ids0 = mimo −34.29, ids1 = kimi +6.22, ids2 = glm +3.78
+        feed_cache(&map, &ids[0], now, 20.11, 45.6).await;
+        feed_cache(&map, &ids[1], now, 36.84, 69.3781).await;
+        feed_cache(&map, &ids[2], now, 91.45, 12.3336).await;
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        let order = build_candidate_order(&vm, &map, now, noon(), None).await;
+        assert_eq!(order.candidate_ids, vec![ids[1], ids[2], ids[0]], "slack 降序");
+        assert_eq!(order.chosen_index, Some(1), "首选是绑定序里的 ids[1]");
+    }
+
+    #[tokio::test]
+    async fn quota_aware_stale_and_missing_sink_below_scored() {
+        let mut map = HashMap::new();
+        let ids = three(&mut map, [SubscriptionState::Healthy; 3]);
+        let now = Utc::now();
+        // ids0: 缓存过期 (STALE_AFTER + 5min), 分数本身最好; ids1: 从未拉到; ids2: 新鲜但分数最差
+        let stale = now - chrono::Duration::seconds(STALE_AFTER_SECS + 300);
+        feed_cache(&map, &ids[0], stale, 99.0, 1.0).await;
+        feed_cache(&map, &ids[2], now, 10.0, 80.0).await;
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        let order = build_candidate_order(&vm, &map, now, noon(), None).await;
+        // 有分的 ids2 最前; 无分的 ids0/ids1 沉底且保持绑定顺序
+        assert_eq!(order.candidate_ids, vec![ids[2], ids[0], ids[1]]);
+        assert_eq!(order.chosen_index, Some(2));
+    }
+
+    #[tokio::test]
+    async fn quota_aware_all_unknown_falls_back_to_configured_order() {
+        let mut map = HashMap::new();
+        let ids = three(&mut map, [SubscriptionState::Healthy; 3]);
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        let order = build_candidate_order(&vm, &map, Utc::now(), noon(), None).await;
+        assert_eq!(order.candidate_ids, ids.to_vec(), "全无数据 → 绑定顺序");
+        assert_eq!(order.chosen_index, Some(0));
+    }
+
+    /// 只重排, 不放宽过滤: 配额分再好, 不可调度的订阅照样进不了候选。
+    #[tokio::test]
+    async fn quota_aware_still_filters_unschedulable() {
+        let mut map = HashMap::new();
+        let ids = three(&mut map, [
+            SubscriptionState::Healthy,
+            SubscriptionState::Disabled,
+            SubscriptionState::RateLimited,
+        ]);
+        let now = Utc::now();
+        // 分数最好的两条 (ids1/ids2) 都不可调度
+        feed_cache(&map, &ids[1], now, 99.0, 1.0).await;
+        feed_cache(&map, &ids[2], now, 90.0, 10.0).await;
+
+        let vm = VirtualModelConfig {
+            name: VirtualModelName::Sonnet,
+            mode: RoutingMode::QuotaAware,
+            subscription_ids: ids.to_vec(),
+            last_used_index: 0,
+        };
+        let order = build_candidate_order(&vm, &map, now, noon(), None).await;
+        assert_eq!(order.candidate_ids, vec![ids[0]]);
     }
 }

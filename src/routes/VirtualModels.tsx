@@ -34,7 +34,7 @@ import type {
   VirtualModelName,
 } from "@/types";
 
-const MODES: RoutingMode[] = ["sequential", "round_robin", "sticky"];
+const MODES: RoutingMode[] = ["sequential", "round_robin", "sticky", "quota_aware"];
 
 export function VirtualModelsPage() {
   const { t } = useT();
@@ -167,7 +167,9 @@ function VirtualModelCard({
       ? t("virtualModels.mode.roundRobinHint")
       : vm.mode === "sticky"
         ? t("virtualModels.mode.stickyHint")
-        : t("virtualModels.mode.sequentialHint");
+        : vm.mode === "quota_aware"
+          ? t("virtualModels.mode.quotaAwareHint")
+          : t("virtualModels.mode.sequentialHint");
   // fallback 是第 5 个虚拟模型, 语义上与 4 个槽位并列而非同级, 投影换色区分
   const isFallback = vm.name === "model-fallback";
   const jev = isJev(vm.name);
